@@ -23,12 +23,12 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
         .iter()
         .map(|variant| {
             let ident = &variant.ident;
-            let attr = if let Some(attr) = variant.attrs.first() {
-                attr.parse_args::<Attr>()
-                    .expect("Try adding a string literal to the #[route(\"/\")]")
-            } else {
-                panic!("#[route] attribute required")
-            };
+            let attr = variant
+                .attrs
+                .iter()
+                .filter_map(|attr| attr.parse_args::<Attr>().ok())
+                .last()
+                .expect("#[route] attr required");
             let uri = attr.0;
 
             (ident, uri)
