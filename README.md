@@ -2,7 +2,7 @@
 
 enum_router is a rust enum router that doesn't support nesting or params.
 
-# Install
+# Install (it's not on cargo yet, sorry)
 
 ```sh
 cargo add enum_router
