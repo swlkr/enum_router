@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
-use syn::{parse::Parse, parse_macro_input, Data, DeriveInput, LitStr, Result};
+use syn::{parse::Parse, parse_macro_input, Data, DeriveInput, Expr, Ident, LitStr, Result};
 
 #[proc_macro_derive(Routes, attributes(route))]
 pub fn routes(s: TokenStream) -> TokenStream {
@@ -19,58 +19,133 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     };
 
     let variants = enum_data.variants;
-    let parts = variants
+    let vars = variants
         .iter()
         .map(|variant| {
             let ident = &variant.ident;
+            let fields = &variant.fields;
             let attr = variant
                 .attrs
                 .iter()
                 .filter_map(|attr| attr.parse_args::<Attr>().ok())
                 .last()
                 .expect("#[route] attr required");
-            let uri = attr.0;
 
-            (ident, uri)
+            (ident, fields, attr)
         })
         .collect::<Vec<_>>();
 
-    let route_to_str = parts
+    let route_to_string = vars
         .iter()
-        .map(|(ident, uri)| quote! { #enum_name::#ident => #uri })
+        .map(|(ident, fields, Attr { url: uri, .. })| match fields {
+            syn::Fields::Named(fields) => {
+                let format = uri
+                    .value()
+                    .split('/')
+                    .map(|part| if part.starts_with(":") { "{}" } else { part })
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let idents = fields
+                    .named
+                    .iter()
+                    .map(|field| field.ident.as_ref().unwrap())
+                    .collect::<Vec<_>>();
+
+                quote! { #enum_name::#ident { #(#idents,)* } => format!(#format, #(#idents,)*) }
+            }
+            syn::Fields::Unnamed(fields) => {
+                let format = uri
+                    .value()
+                    .split('/')
+                    .map(|part| if part.starts_with(":") { "{}" } else { part })
+                    .collect::<Vec<_>>()
+                    .join("/");
+
+                let idents = fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
+                    .collect::<Vec<_>>();
+
+                quote! { #enum_name::#ident(#(#idents,)*) => format!(#format, #(#idents,)*) }
+            }
+            syn::Fields::Unit => quote! { #enum_name::#ident => #uri.to_owned() },
+        })
         .collect::<Vec<_>>();
 
-    let str_to_route = parts
+    let route_to_path = vars
         .iter()
-        .map(|(ident, uri)| quote! { #uri => #enum_name::#ident })
+        .map(|(ident, fields, Attr { url: uri, ..})| match fields {
+            syn::Fields::Named(fields) => {
+                let format = uri
+                    .value()
+                    .split('/')
+                    .map(|part| if part.starts_with(":") { "{}" } else { part })
+                    .collect::<Vec<_>>()
+                    .join("/");
+
+                let idents = fields
+                    .named
+                    .iter()
+                    .map(|field| field.ident.as_ref().unwrap())
+                    .collect::<Vec<_>>();
+
+                quote! { #enum_name::#ident { #(#idents,)* } => { format!(#format, #(#idents,)*); #uri.to_owned() } }
+            }
+            syn::Fields::Unnamed(fields) => {
+                let format = uri
+                    .value()
+                    .split('/')
+                    .map(|part| if part.starts_with(":") { "{}" } else { part })
+                    .collect::<Vec<_>>()
+                    .join("/");
+
+                let idents = fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
+                    .collect::<Vec<_>>();
+
+                quote! { #enum_name::#ident(#(#idents,)*) => format!(#format, #(#idents,)*) }
+            },
+            syn::Fields::Unit => quote! { #enum_name::#ident => #uri.to_owned() },
+        })
         .collect::<Vec<_>>();
 
-    let not_found_str_to_route = parts
+    let axum_route = vars
         .iter()
-        .filter(|(_, uri)| uri.value().ends_with("404"))
-        .map(|(ident, _)| quote! { _ => #enum_name::#ident })
-        .last();
-
-    let not_found = match not_found_str_to_route {
-        Some(not_found) => not_found,
-        None => quote! { _ => unimplemented!() },
-    };
+        .filter(|(_, _, Attr { handlers, .. })| handlers.is_some())
+        .map(|(_ident, _, Attr { url, handlers })| {
+            quote! { .route(#url, #handlers) }
+        })
+        .collect::<Vec<_>>();
 
     Ok(quote! {
-        impl std::fmt::Display for #enum_name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str(match self {
-                    #(#route_to_str,)*
-                })
+        impl Route {
+            fn url(&self) -> String {
+                match self {
+                    #(#route_to_string,)*
+                }
+            }
+
+            fn path(&self) -> String {
+                match self {
+                    #(#route_to_path,)*
+                }
+            }
+
+            #[cfg(feature = "axum")]
+            fn router() -> ::axum::Router {
+                use ::axum::routing::{get, post};
+                ::axum::Router::new()#(#axum_route)*
             }
         }
 
-        impl From<&str> for #enum_name {
-            fn from(value: &str) -> Self {
-                match value {
-                    #(#str_to_route,)*
-                    #not_found
-                }
+        impl std::fmt::Display for Route {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_fmt(format_args!("{}", self.url()))
             }
         }
     })
@@ -78,10 +153,33 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
 
 impl Parse for Attr {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let route = input.parse::<LitStr>()?;
-        Ok(Attr(route))
+        let mut attr = Attr {
+            url: LitStr::new("", Span::call_site()),
+            handlers: None,
+        };
+        let parsed = syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated(input)?;
+        for expr in parsed.iter() {
+            match expr {
+                Expr::Lit(expr) => match &expr.lit {
+                    syn::Lit::Str(lit_str) => {
+                        attr.url = lit_str.clone();
+                    }
+                    _ => panic!("#[route] first arg can only be &str"),
+                },
+                Expr::MethodCall(expr) => {
+                    attr.handlers = Some(expr.to_token_stream());
+                }
+                Expr::Call(expr) => attr.handlers = Some(expr.to_token_stream()),
+                _ => {}
+            }
+        }
+
+        Ok(attr)
     }
 }
 
 #[derive(Clone)]
-struct Attr(LitStr);
+struct Attr {
+    url: LitStr,
+    handlers: Option<TokenStream2>,
+}

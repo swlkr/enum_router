@@ -1,11 +1,9 @@
 # enum_router
 
-enum_router is a rust enum router that doesn't support nesting or params.
-
-# Install (it's not on cargo yet, sorry)
+enum_router is a rust enum router that doesn't support nesting.
 
 ```sh
-cargo add enum_router
+cargo add enum_router # still not on crates.io (yet)
 ```
 
 # Declare your routes
@@ -14,26 +12,28 @@ cargo add enum_router
 use enum_router::Routes;
 
 #[derive(Routes)]
-struct Route {
+enum Route {
   #[route("/")]
   Root,
   #[route("/todos")]
-  Todos
-  #[route("/404")]
-  NotFound
+  Todos,
+  #[route("/todos/:id")]
+  ShowTodo { id: i32 },
+  #[route("/todos/:id/edit")]
+  EditTodo(i32)
 }
-
-// this gives you two way conversions from &str and to strings with std::fmt::Display
-
-let path = "/";
-let route = Route::from(path); // => Route::Root
-
-let path = "/does-not-exist";
-let route = Route::from(path); // => Route::NotFound. Any route that ends with 404 returns NotFound
-
-let path = Route::Root.to_string(); // => "/"
-
-let path = format!("{}", Route::Todos); // => "/todos"
 ```
 
-That's it!
+Then it works like this:
+
+```rust
+#[cfg(test)]
+mod tests {
+  #[test]
+  fn it_works() {
+    assert_eq!(Route::Root.url(), "/");
+    assert_eq!(Route::Todos.url(), "/todos");
+    assert_eq!(Route::Todos { id: 1 }.url(), "/todos/1");
+  }
+}
+```
