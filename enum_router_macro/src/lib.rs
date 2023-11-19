@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
-use syn::{parse::Parse, parse_macro_input, Data, DeriveInput, Expr, Ident, LitStr, Result};
+use syn::{parse_macro_input, Data, DeriveInput, Ident, LitStr, Result};
 
-#[proc_macro_derive(Routes, attributes(route))]
+#[proc_macro_derive(Routes, attributes(get, post))]
 pub fn routes(s: TokenStream) -> TokenStream {
     let input = parse_macro_input!(s as DeriveInput);
     match routes_macro(input) {
@@ -27,9 +27,22 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
             let attr = variant
                 .attrs
                 .iter()
-                .filter_map(|attr| attr.parse_args::<Attr>().ok())
+                .map(|attr| {
+                    let method = &attr
+                        .path
+                        .segments
+                        .last()
+                        .expect("#[get] or #[post] only")
+                        .ident;
+                    Attr {
+                        method,
+                        path: attr
+                            .parse_args::<LitStr>()
+                            .expect("#[get] or #[post] expect a &str"),
+                    }
+                })
                 .last()
-                .expect("#[route] attr required");
+                .expect("#[get] or #[post] attr required");
 
             (ident, fields, attr)
         })
@@ -37,9 +50,9 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
 
     let route_to_string = vars
         .iter()
-        .map(|(ident, fields, Attr { url: uri, .. })| match fields {
+        .map(|(ident, fields, Attr { path, .. })| match fields {
             syn::Fields::Named(fields) => {
-                let format = uri
+                let format = path
                     .value()
                     .split('/')
                     .map(|part| if part.starts_with(":") { "{}" } else { part })
@@ -54,7 +67,7 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
                 quote! { #enum_name::#ident { #(#idents,)* } => format!(#format, #(#idents,)*) }
             }
             syn::Fields::Unnamed(fields) => {
-                let format = uri
+                let format = path
                     .value()
                     .split('/')
                     .map(|part| if part.starts_with(":") { "{}" } else { part })
@@ -70,15 +83,15 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
 
                 quote! { #enum_name::#ident(#(#idents,)*) => format!(#format, #(#idents,)*) }
             }
-            syn::Fields::Unit => quote! { #enum_name::#ident => #uri.to_owned() },
+            syn::Fields::Unit => quote! { #enum_name::#ident => #path.to_owned() },
         })
         .collect::<Vec<_>>();
 
     let route_to_path = vars
         .iter()
-        .map(|(ident, fields, Attr { url: uri, ..})| match fields {
+        .map(|(ident, fields, Attr { path, .. })| match fields {
             syn::Fields::Named(fields) => {
-                let format = uri
+                let format = path
                     .value()
                     .split('/')
                     .map(|part| if part.starts_with(":") { "{}" } else { part })
@@ -91,10 +104,10 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
                     .map(|field| field.ident.as_ref().unwrap())
                     .collect::<Vec<_>>();
 
-                quote! { #enum_name::#ident { #(#idents,)* } => { format!(#format, #(#idents,)*); #uri.to_owned() } }
+                quote! { #enum_name::#ident { #(#idents,)* } => { format!(#format, #(#idents,)*); #path.to_owned() } }
             }
             syn::Fields::Unnamed(fields) => {
-                let format = uri
+                let format = path
                     .value()
                     .split('/')
                     .map(|part| if part.starts_with(":") { "{}" } else { part })
@@ -110,15 +123,14 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
 
                 quote! { #enum_name::#ident(#(#idents,)*) => format!(#format, #(#idents,)*) }
             },
-            syn::Fields::Unit => quote! { #enum_name::#ident => #uri.to_owned() },
+            syn::Fields::Unit => quote! { #enum_name::#ident => #path.to_owned() },
         })
         .collect::<Vec<_>>();
 
     let axum_route = vars
         .iter()
-        .filter(|(_, _, Attr { handlers, .. })| handlers.is_some())
-        .map(|(_ident, _, Attr { url, handlers })| {
-            quote! { .route(#url, #handlers) }
+        .map(|(ident, _, Attr { path, method })| {
+            quote! { .route(#path, #method(#ident::#method)) }
         })
         .collect::<Vec<_>>();
 
@@ -137,6 +149,7 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
             }
 
             #[cfg(feature = "axum")]
+            #[cfg(feature = "backend")]
             fn router() -> ::axum::Router {
                 use ::axum::routing::{get, post};
                 ::axum::Router::new()#(#axum_route)*
@@ -151,35 +164,8 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     })
 }
 
-impl Parse for Attr {
-    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let mut attr = Attr {
-            url: LitStr::new("", Span::call_site()),
-            handlers: None,
-        };
-        let parsed = syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated(input)?;
-        for expr in parsed.iter() {
-            match expr {
-                Expr::Lit(expr) => match &expr.lit {
-                    syn::Lit::Str(lit_str) => {
-                        attr.url = lit_str.clone();
-                    }
-                    _ => panic!("#[route] first arg can only be &str"),
-                },
-                Expr::MethodCall(expr) => {
-                    attr.handlers = Some(expr.to_token_stream());
-                }
-                Expr::Call(expr) => attr.handlers = Some(expr.to_token_stream()),
-                _ => {}
-            }
-        }
-
-        Ok(attr)
-    }
-}
-
 #[derive(Clone)]
-struct Attr {
-    url: LitStr,
-    handlers: Option<TokenStream2>,
+struct Attr<'a> {
+    path: LitStr,
+    method: &'a Ident,
 }
