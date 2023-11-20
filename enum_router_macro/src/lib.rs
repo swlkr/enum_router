@@ -130,7 +130,8 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     let axum_route = vars
         .iter()
         .map(|(ident, _, Attr { path, method })| {
-            let fn_name = pascal_to_camel(&ident.to_string());
+            let fn_string = pascal_to_camel(&ident.to_string());
+            let fn_name = Ident::new(&fn_string, method.span());
             quote! { .route(#path, #method(#fn_name)) }
         })
         .collect::<Vec<_>>();
@@ -165,22 +166,18 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
 
 fn pascal_to_camel(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
-    let mut is_first = true;
-    let mut prev_char = ' ';
+    let mut chars = input.chars();
+    if let Some(char) = &chars.nth(0) {
+        result.push(char.to_ascii_lowercase());
+    }
 
-    for c in input.chars() {
-        if c.is_alphanumeric() {
-            if is_first {
-                result.push(c.to_lowercase().next().unwrap());
-                is_first = false;
-            } else {
-                if prev_char.is_uppercase() {
-                    result.push('_');
-                }
-                result.push(c.to_lowercase().next().unwrap());
-            }
+    while let Some(char) = chars.next() {
+        if char.is_uppercase() {
+            result.push('_');
+            result.push(char.to_lowercase().next().unwrap());
+        } else {
+            result.push(char);
         }
-        prev_char = c;
     }
 
     result

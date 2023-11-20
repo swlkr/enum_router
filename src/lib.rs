@@ -3,8 +3,9 @@ extern crate self as enum_router;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use axum::body::Body;
-    use axum::http::{Request, Response, StatusCode};
+    use axum::http::{Request, StatusCode};
     use axum::response::IntoResponse;
     use axum::Router;
     use enum_router::Routes;
