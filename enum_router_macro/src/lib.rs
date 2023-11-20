@@ -3,7 +3,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
 use syn::{parse_macro_input, Data, DeriveInput, Ident, LitStr, Result};
 
-#[proc_macro_derive(Routes, attributes(get, post))]
+#[proc_macro_derive(Routes, attributes(get, post, delete, patch, put))]
 pub fn routes(s: TokenStream) -> TokenStream {
     let input = parse_macro_input!(s as DeriveInput);
     match routes_macro(input) {
@@ -32,13 +32,13 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
                         .path
                         .segments
                         .last()
-                        .expect("#[get] or #[post] only")
+                        .expect("#[get], #[post], #[delete], #[patch] or #[put] only")
                         .ident;
                     Attr {
                         method,
                         path: attr
                             .parse_args::<LitStr>()
-                            .expect("#[get] or #[post] expect a &str"),
+                            .expect("attributes expect a string literal"),
                     }
                 })
                 .last()
@@ -130,7 +130,8 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     let axum_route = vars
         .iter()
         .map(|(ident, _, Attr { path, method })| {
-            quote! { .route(#path, #method(#ident::#method)) }
+            let fn_name = pascal_to_camel(&ident.to_string());
+            quote! { .route(#path, #method(#fn_name)) }
         })
         .collect::<Vec<_>>();
 
@@ -148,10 +149,8 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
                 }
             }
 
-            #[cfg(feature = "axum")]
-            #[cfg(feature = "backend")]
             fn router() -> ::axum::Router {
-                use ::axum::routing::{get, post};
+                use ::axum::routing::{get, post, patch, put, delete};
                 ::axum::Router::new()#(#axum_route)*
             }
         }
@@ -162,6 +161,29 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
             }
         }
     })
+}
+
+fn pascal_to_camel(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut is_first = true;
+    let mut prev_char = ' ';
+
+    for c in input.chars() {
+        if c.is_alphanumeric() {
+            if is_first {
+                result.push(c.to_lowercase().next().unwrap());
+                is_first = false;
+            } else {
+                if prev_char.is_uppercase() {
+                    result.push('_');
+                }
+                result.push(c.to_lowercase().next().unwrap());
+            }
+        }
+        prev_char = c;
+    }
+
+    result
 }
 
 #[derive(Clone)]

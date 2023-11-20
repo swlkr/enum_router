@@ -3,64 +3,64 @@ extern crate self as enum_router;
 
 #[cfg(test)]
 mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, Response, StatusCode};
+    use axum::response::IntoResponse;
+    use axum::Router;
     use enum_router::Routes;
+    use tower::ServiceExt;
 
-    #[test]
-    fn it_works() {
-        #[derive(Routes, Debug, PartialEq)]
-        enum Route {
-            #[route("/")]
-            Root,
-            #[route("/todos")]
-            Todos,
-            #[route("/todos/:id")]
-            ShowTodo { id: i32 },
-            #[route("/todos/:id/edit")]
-            EditTodo(i32),
-        }
-
-        assert_eq!(Route::Root.url(), "/");
-        assert_eq!(Route::Todos.url(), "/todos");
-        assert_eq!(Route::ShowTodo { id: 1 }.url(), "/todos/1");
-        assert_eq!(Route::Root.path(), "/");
-        assert_eq!(Route::EditTodo(0).url(), "/todos/0/edit");
-        assert_eq!(Route::ShowTodo { id: i32::default() }.path(), "/todos/:id");
-        // assert_eq!(Route::parse("/todos/1"), Some(Route::ShowTodo { id: 1 }));
-        // assert_eq!(path!(Route::ShowTodo), "/todos/:id");
+    async fn index() -> impl IntoResponse {
+        "index"
     }
 
-    #[cfg(feature = "axum")]
-    mod axum {
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
-        use axum::response::IntoResponse;
-        use enum_router::Routes;
-        use tower::ServiceExt;
+    async fn login_form() -> impl IntoResponse {
+        "login form"
+    }
 
-        async fn get_index() -> impl IntoResponse {
-            "get_index"
-        }
+    async fn login() -> impl IntoResponse {
+        "login"
+    }
 
-        async fn post_index() -> impl IntoResponse {
-            "post_index"
-        }
+    #[allow(unused)]
+    #[derive(Routes, Debug, PartialEq)]
+    pub enum Route {
+        #[get("/")]
+        Index,
+        #[get("/login")]
+        LoginForm,
+        #[post("/login")]
+        Login,
+    }
 
-        #[derive(Routes, Debug, PartialEq)]
-        pub enum Route {
-            #[allow(unused)]
-            #[route("/", get(get_index).post(post_index))]
-            Root,
-        }
+    #[tokio::test]
+    async fn it_works() -> Result<(), Box<dyn std::error::Error>> {
+        let app = Route::router();
 
-        #[tokio::test]
-        async fn axum_router_works() {
-            let app = Route::router();
-            let response = app
-                .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
-                .await
-                .unwrap();
+        assert_eq!(StatusCode::OK, make_request(&app, "GET", "/").await);
+        assert_eq!(StatusCode::OK, make_request(&app, "GET", "/login").await);
+        assert_eq!(StatusCode::OK, make_request(&app, "POST", "/login").await);
+        assert_eq!(
+            StatusCode::NOT_FOUND,
+            make_request(&app, "GET", "/nope").await
+        );
 
-            assert_eq!(response.status(), StatusCode::OK);
-        }
+        Ok(())
+    }
+
+    fn request(method: &str, uri: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    async fn make_request(app: &Router, method: &str, uri: &str) -> StatusCode {
+        app.clone()
+            .oneshot(request(method, uri))
+            .await
+            .unwrap()
+            .status()
     }
 }

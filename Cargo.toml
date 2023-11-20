@@ -11,14 +11,9 @@ members = [
 
 [dependencies]
 enum_router_macro = { path = "enum_router_macro", version = "0.1.0" }
-axum-core = { version = "0.3", optional = true }
+axum-core = { version = "0.3" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tower = { version = "0.4.13" }
 axum = { version = "0.6" }
-
-
-[features]
-axum = ["axum-core"]
-
