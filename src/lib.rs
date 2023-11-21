@@ -23,6 +23,10 @@ mod tests {
         "login"
     }
 
+    async fn abc() -> impl IntoResponse {
+        "login"
+    }
+
     #[allow(unused)]
     #[derive(Routes, Debug, PartialEq)]
     pub enum Route {
@@ -32,6 +36,8 @@ mod tests {
         LoginForm,
         #[post("/login")]
         Login,
+        #[get("/abc")]
+        Abc { xyz: u8 },
     }
 
     #[tokio::test]
@@ -44,6 +50,11 @@ mod tests {
         assert_eq!(
             StatusCode::NOT_FOUND,
             make_request(&app, "GET", "/nope").await
+        );
+        assert_eq!(StatusCode::OK, make_request(&app, "GET", "/abc").await);
+        assert_eq!(
+            StatusCode::OK,
+            make_request(&app, "GET", "/abc?xyz=123").await
         );
 
         Ok(())

@@ -52,19 +52,23 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
         .iter()
         .map(|(ident, fields, Attr { path, .. })| match fields {
             syn::Fields::Named(fields) => {
-                let format = path
-                    .value()
-                    .split('/')
-                    .map(|part| if part.starts_with(":") { "{}" } else { part })
-                    .collect::<Vec<_>>()
-                    .join("/");
                 let idents = fields
                     .named
                     .iter()
                     .map(|field| field.ident.as_ref().unwrap())
                     .collect::<Vec<_>>();
 
-                quote! { #enum_name::#ident { #(#idents,)* } => format!(#format, #(#idents,)*) }
+                let query = idents
+                    .iter()
+                    .map(|ident| format!("{}={{}}", ident))
+                    .collect::<Vec<_>>()
+                    .join("&");
+
+                let format = format!("{}?{}", path.value(), query);
+
+                quote! {
+                    #enum_name::#ident { #(#idents,)* } => format!(#format, #(#idents,)*)
+                }
             }
             syn::Fields::Unnamed(fields) => {
                 let format = path
@@ -83,46 +87,6 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
 
                 quote! { #enum_name::#ident(#(#idents,)*) => format!(#format, #(#idents,)*) }
             }
-            syn::Fields::Unit => quote! { #enum_name::#ident => #path.to_owned() },
-        })
-        .collect::<Vec<_>>();
-
-    let route_to_path = vars
-        .iter()
-        .map(|(ident, fields, Attr { path, .. })| match fields {
-            syn::Fields::Named(fields) => {
-                let format = path
-                    .value()
-                    .split('/')
-                    .map(|part| if part.starts_with(":") { "{}" } else { part })
-                    .collect::<Vec<_>>()
-                    .join("/");
-
-                let idents = fields
-                    .named
-                    .iter()
-                    .map(|field| field.ident.as_ref().unwrap())
-                    .collect::<Vec<_>>();
-
-                quote! { #enum_name::#ident { #(#idents,)* } => { format!(#format, #(#idents,)*); #path.to_owned() } }
-            }
-            syn::Fields::Unnamed(fields) => {
-                let format = path
-                    .value()
-                    .split('/')
-                    .map(|part| if part.starts_with(":") { "{}" } else { part })
-                    .collect::<Vec<_>>()
-                    .join("/");
-
-                let idents = fields
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
-                    .collect::<Vec<_>>();
-
-                quote! { #enum_name::#ident(#(#idents,)*) => format!(#format, #(#idents,)*) }
-            },
             syn::Fields::Unit => quote! { #enum_name::#ident => #path.to_owned() },
         })
         .collect::<Vec<_>>();
@@ -141,12 +105,6 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
             fn url(&self) -> String {
                 match self {
                     #(#route_to_string,)*
-                }
-            }
-
-            fn path(&self) -> String {
-                match self {
-                    #(#route_to_path,)*
                 }
             }
 
