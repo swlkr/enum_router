@@ -1,7 +1,10 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
-use syn::{parse_macro_input, Data, DeriveInput, Ident, LitStr, Result};
+use syn::{
+    parse_macro_input, Data, DeriveInput, Fields, FieldsNamed, FieldsUnnamed, Ident, LitStr,
+    Result, Variant,
+};
 
 #[proc_macro_derive(Routes, attributes(get, post, delete, patch, put))]
 pub fn routes(s: TokenStream) -> TokenStream {
@@ -14,97 +17,78 @@ pub fn routes(s: TokenStream) -> TokenStream {
 
 fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     let enum_name = input.ident;
-    let Data::Enum(enum_data) = input.data else {
+    let Data::Enum(data) = input.data else {
         panic!("Only enums are supported");
     };
 
-    let variants = enum_data.variants;
-    let vars = variants
-        .iter()
-        .map(|variant| {
-            let ident = &variant.ident;
-            let fields = &variant.fields;
-            let attr = variant
-                .attrs
-                .iter()
-                .map(|attr| {
-                    let method = &attr
-                        .path
-                        .segments
-                        .last()
-                        .expect("#[get], #[post], #[delete], #[patch] or #[put] only")
-                        .ident;
-                    Attr {
-                        method,
-                        path: attr
-                            .parse_args::<LitStr>()
-                            .expect("attributes expect a string literal"),
-                    }
-                })
-                .last()
-                .expect("#[get] or #[post] attr required");
-
-            (ident, fields, attr)
-        })
+    let variants = data
+        .variants
+        .into_iter()
+        .map(|variant| RouteVariant::from(variant))
         .collect::<Vec<_>>();
 
-    let route_to_string = vars
+    let urls = variants
         .iter()
-        .map(|(ident, fields, Attr { path, .. })| match fields {
-            syn::Fields::Named(fields) => {
-                let idents = fields
-                    .named
-                    .iter()
-                    .map(|field| field.ident.as_ref().unwrap())
-                    .collect::<Vec<_>>();
+        .map(
+            |RouteVariant {
+                 ref variant,
+                 ref fields,
+                 ref path,
+                 ..
+             }| {
+                let left = left(&enum_name, variant, fields);
+                let right = right(fields, path);
 
-                let query = idents
-                    .iter()
-                    .map(|ident| format!("{}={{}}", ident))
-                    .collect::<Vec<_>>()
-                    .join("&");
-
-                let format = format!("{}?{}", path.value(), query);
-
-                quote! {
-                    #enum_name::#ident { #(#idents,)* } => format!(#format, #(#idents,)*)
-                }
-            }
-            syn::Fields::Unnamed(fields) => {
-                let format = path
-                    .value()
-                    .split('/')
-                    .map(|part| if part.starts_with(":") { "{}" } else { part })
-                    .collect::<Vec<_>>()
-                    .join("/");
-
-                let idents = fields
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
-                    .collect::<Vec<_>>();
-
-                quote! { #enum_name::#ident(#(#idents,)*) => format!(#format, #(#idents,)*) }
-            }
-            syn::Fields::Unit => quote! { #enum_name::#ident => #path.to_owned() },
-        })
+                quote! { #left => #right }
+            },
+        )
         .collect::<Vec<_>>();
 
-    let axum_route = vars
+    let methods = variants
         .iter()
-        .map(|(ident, _, Attr { path, method })| {
-            let fn_string = pascal_to_camel(&ident.to_string());
-            let fn_name = Ident::new(&fn_string, method.span());
-            quote! { .route(#path, #method(#fn_name)) }
-        })
+        .map(
+            |RouteVariant {
+                 ref method,
+                 ref variant,
+                 ref fields,
+                 ..
+             }| {
+                let left = left(&enum_name, variant, fields);
+                let right = method.to_string();
+
+                quote! { #left => #right.to_owned() }
+            },
+        )
+        .collect::<Vec<_>>();
+
+    let axum_route = variants
+        .iter()
+        .map(
+            |RouteVariant {
+                 ref path,
+                 ref method,
+                 ref variant,
+                 ..
+             }| {
+                let fn_string = pascal_to_camel(&variant.to_string());
+                let fn_name = Ident::new(&fn_string, method.span());
+                quote! { .route(#path, #method(#fn_name)) }
+            },
+        )
         .collect::<Vec<_>>();
 
     Ok(quote! {
         impl Route {
             fn url(&self) -> String {
                 match self {
-                    #(#route_to_string,)*
+                    #(#urls,)*
+                }
+            }
+
+            #[allow(unused)]
+            fn method(&self) -> String {
+                match self {
+                    #(#methods,)*
                 }
             }
 
@@ -120,6 +104,84 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
             }
         }
     })
+}
+
+fn right_from_unnamed(path: &LitStr, fields: &FieldsUnnamed) -> TokenStream2 {
+    let format = path
+        .value()
+        .split('/')
+        .map(|part| if part.starts_with(":") { "{}" } else { part })
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let idents = fields
+        .unnamed
+        .iter()
+        .enumerate()
+        .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
+        .collect::<Vec<_>>();
+
+    quote! { format!(#format, #(#idents,)*) }
+}
+
+fn right_from_named(fields: &FieldsNamed, path: &LitStr) -> TokenStream2 {
+    let idents = fields
+        .named
+        .iter()
+        .map(|field| field.ident.as_ref().unwrap())
+        .collect::<Vec<_>>();
+
+    let query =
+        idents
+            .iter()
+            .map(|ident| format!("{}={{:?}}", ident))
+            .collect::<Vec<_>>()
+            .join("&");
+
+    let format = format!("{}?{}", path.value(), query);
+
+    quote! { format!(#format, #(#idents,)*) }
+}
+
+fn right(fields: &Fields, path: &LitStr) -> TokenStream2 {
+    match fields {
+        Fields::Named(fields) => right_from_named(fields, path),
+        Fields::Unnamed(fields) => right_from_unnamed(path, fields),
+        Fields::Unit => quote! { #path.to_owned() },
+    }
+}
+
+fn left_from_named(r#ident: &Ident, variant: &Ident, fields: &FieldsNamed) -> TokenStream2 {
+    let idents = fields
+        .named
+        .iter()
+        .map(|field| field.ident.as_ref().unwrap())
+        .collect::<Vec<_>>();
+
+    quote! {
+        #r#ident::#variant { #(#idents,)* }
+    }
+}
+
+fn left_from_unnamed(r#ident: &Ident, variant: &Ident, fields: &FieldsUnnamed) -> TokenStream2 {
+    let idents = fields
+        .unnamed
+        .iter()
+        .enumerate()
+        .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
+        .collect::<Vec<_>>();
+
+    quote! {
+        #r#ident::#variant(#(#idents,)*)
+    }
+}
+
+fn left(r#ident: &Ident, variant: &Ident, fields: &Fields) -> TokenStream2 {
+    match fields {
+        syn::Fields::Named(fields) => left_from_named(r#ident, variant, fields),
+        syn::Fields::Unnamed(fields) => left_from_unnamed(r#ident, variant, fields),
+        syn::Fields::Unit => quote! { #r#ident::#variant },
+    }
 }
 
 fn pascal_to_camel(input: &str) -> String {
@@ -142,7 +204,34 @@ fn pascal_to_camel(input: &str) -> String {
 }
 
 #[derive(Clone)]
-struct Attr<'a> {
+struct RouteVariant {
+    method: Ident,
     path: LitStr,
-    method: &'a Ident,
+    variant: Ident,
+    fields: Fields,
+}
+
+impl From<Variant> for RouteVariant {
+    fn from(value: Variant) -> Self {
+        let variant = value.ident;
+        let (method, path) = value
+            .attrs
+            .into_iter()
+            .filter_map(
+                |attr| match (attr.path.get_ident(), attr.parse_args::<LitStr>().ok()) {
+                    (Some(ident), Some(path)) => Some((ident.clone(), path)),
+                    _ => None,
+                },
+            )
+            .last()
+            .expect("should be #[get], #[post], #[put] or #[delete]");
+        let fields = value.fields;
+
+        RouteVariant {
+            path,
+            method,
+            variant,
+            fields,
+        }
+    }
 }
