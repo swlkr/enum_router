@@ -1,6 +1,6 @@
 # enum_router
 
-enum_router is a rust enum router that doesn't support nesting.
+enum_router is a rust enum router for axum that doesn't support nesting.
 
 ```sh
 cargo add enum_router # still not on crates.io (yet)
@@ -13,27 +13,38 @@ use enum_router::Routes;
 
 #[derive(Routes)]
 enum Route {
-  #[route("/")]
+  #[get("/")]
   Root,
-  #[route("/todos")]
-  Todos,
-  #[route("/todos/:id")]
-  ShowTodo { id: i32 },
-  #[route("/todos/:id/edit")]
+  #[get("/todos/:id/edit")]
   EditTodo(i32)
+  #[put("/todos/:id")]
+  UpdateTodo(i32)
 }
 ```
 
-Then it works like this:
+It will complain about missing functions which you still have to write:
 
 ```rust
-#[cfg(test)]
-mod tests {
-  #[test]
-  fn it_works() {
-    assert_eq!(Route::Root.url(), "/");
-    assert_eq!(Route::Todos.url(), "/todos");
-    assert_eq!(Route::Todos { id: 1 }.url(), "/todos/1");
-  }
+async fn root() -> &'static str {
+  "root"
+}
+
+async fn edit_todo(Path(id): Path<i32>) -> String {
+  format!("todo {id}")
+}
+
+async fn update_todo(Path(id): Path<i32>) -> String {
+  format!("todo {id}")
+}
+```
+
+Then you now have axum routing like this:
+
+```rust
+#[tokio::main]
+async fn main() {
+  let router = Route::router();
+  let addr = "127.0.0.1:9001".parse().unwrap();
+  axum::Server::bind(&addr).serve(router.into_make_service()).await.unwrap();
 }
 ```
