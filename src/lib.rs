@@ -1,4 +1,4 @@
-pub use enum_router_macro::Routes;
+pub use enum_router_macro::{router, Routes};
 extern crate self as enum_router;
 
 #[cfg(test)]
@@ -9,7 +9,7 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use axum::response::IntoResponse;
     use axum::Router;
-    use enum_router::Routes;
+    use enum_router::router;
     use serde::Deserialize;
     use tower::ServiceExt;
 
@@ -69,6 +69,34 @@ mod tests {
             StatusCode::OK,
             make_request(&app, "GET", "/abc?abc=123").await
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn state_works() -> Result<(), Box<dyn std::error::Error>> {
+        use axum::extract::State;
+        use std::sync::Arc;
+
+        struct AppState {
+            #[allow(unused)]
+            a: String,
+        }
+
+        #[router(Arc<AppState>)]
+        #[allow(unused)]
+        enum Route {
+            #[get("/")]
+            Index,
+        }
+
+        async fn index(State(_s): State<Arc<AppState>>) -> &'static str {
+            "index"
+        }
+
+        let app = Route::router().with_state(Arc::new(AppState { a: "".into() }));
+
+        assert_eq!(StatusCode::OK, make_request(&app, "GET", "/").await);
 
         Ok(())
     }

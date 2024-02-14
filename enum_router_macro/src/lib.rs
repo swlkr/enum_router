@@ -2,11 +2,48 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, FieldsNamed, FieldsUnnamed, Ident, LitStr,
-    Result, Variant,
+    parse::Parse, parse_macro_input, Attribute, Data, DeriveInput, Fields, FieldsNamed,
+    FieldsUnnamed, Ident, ItemEnum, LitStr, Result, Type, Variant,
 };
 
-#[proc_macro_derive(Routes, attributes(get, post, delete, patch, put))]
+struct Args {
+    state: Option<Type>,
+}
+
+impl Parse for Args {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let state = input.parse::<Type>().ok();
+
+        Ok(Self { state })
+    }
+}
+
+#[proc_macro_attribute]
+pub fn router(args: TokenStream, input: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(args as Args);
+    let input = parse_macro_input!(input as ItemEnum);
+    match router_macro(args, input) {
+        Ok(s) => s.to_token_stream().into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+fn router_macro(args: Args, item_enum: ItemEnum) -> Result<TokenStream2> {
+    let attr = match args.state {
+        Some(st) => quote! { #st },
+        None => quote! { () },
+    };
+
+    let expanded = quote! {
+        #[derive(enum_router::Routes)]
+        #[state(#attr)]
+        #item_enum
+    };
+
+    Ok(expanded)
+}
+
+#[proc_macro_derive(Routes, attributes(get, post, delete, patch, put, state))]
 pub fn routes(s: TokenStream) -> TokenStream {
     let input = parse_macro_input!(s as DeriveInput);
     match routes_macro(input) {
@@ -19,6 +56,21 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     let enum_name = input.ident;
     let Data::Enum(data) = input.data else {
         panic!("Only enums are supported");
+    };
+
+    let arg = input
+        .attrs
+        .iter()
+        .filter(|attr| match attr.path.get_ident() {
+            Some(ident) => ident.to_string() == "state",
+            None => false,
+        })
+        .filter_map(args)
+        .last();
+
+    let state_generic = match arg {
+        Some(Args { state }) => quote! { #state },
+        None => quote! { () },
     };
 
     let variants = data
@@ -92,7 +144,7 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
                 }
             }
 
-            fn router() -> ::axum::Router {
+            fn router() -> ::axum::Router<#state_generic> {
                 use ::axum::routing::{get, post, patch, put, delete};
                 ::axum::Router::new()#(#axum_route)*
             }
@@ -131,12 +183,11 @@ fn right_from_named(fields: &FieldsNamed, path: &LitStr) -> TokenStream2 {
         .map(|field| field.ident.as_ref().unwrap())
         .collect::<Vec<_>>();
 
-    let query =
-        idents
-            .iter()
-            .map(|ident| format!("{}={{:?}}", ident))
-            .collect::<Vec<_>>()
-            .join("&");
+    let query = idents
+        .iter()
+        .map(|ident| format!("{}={{:?}}", ident))
+        .collect::<Vec<_>>()
+        .join("&");
 
     let format = format!("{}?{}", path.value(), query);
 
@@ -224,7 +275,7 @@ impl From<Variant> for RouteVariant {
                 },
             )
             .last()
-            .expect("should be #[get], #[post], #[put] or #[delete]");
+            .expect("should be #[get], #[post], #[put], #[delete] or #[state]");
         let fields = value.fields;
 
         RouteVariant {
@@ -234,4 +285,8 @@ impl From<Variant> for RouteVariant {
             fields,
         }
     }
+}
+
+fn args(attr: &Attribute) -> Option<Args> {
+    attr.parse_args::<Args>().ok()
 }
