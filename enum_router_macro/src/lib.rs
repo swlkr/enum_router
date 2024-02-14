@@ -78,7 +78,7 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
         .collect::<Vec<_>>();
 
     Ok(quote! {
-        impl Route {
+        impl #enum_name {
             fn url(&self) -> String {
                 match self {
                     #(#urls,)*
@@ -98,7 +98,7 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
             }
         }
 
-        impl std::fmt::Display for Route {
+        impl std::fmt::Display for #enum_name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_fmt(format_args!("{}", self.url()))
             }
