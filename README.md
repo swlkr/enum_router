@@ -1,9 +1,9 @@
 # enum_router
 
-enum_router is a rust enum router for axum that doesn't support nesting.
+enum_router is a rust enum router for axum.
 
 ```sh
-cargo add enum_router # still not on crates.io (yet)
+cargo add --git https://github.com/swlkr/enum_router
 ```
 
 # Declare your routes
