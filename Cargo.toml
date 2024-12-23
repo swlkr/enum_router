@@ -3,7 +3,6 @@ name = "enum_router"
 version = "0.1.0"
 edition = "2021"
 
-
 [workspace]
 members = [
   "enum_router_macro"
@@ -18,3 +17,7 @@ serde = { version = "1.0.193", features = ["serde_derive", "derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tower = { version = "0.4.13" }
 axum = { version = "0.6" }
+
+[[test]]
+name = "integration_test"
+test = true
