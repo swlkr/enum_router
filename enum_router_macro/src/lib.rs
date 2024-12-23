@@ -55,7 +55,10 @@ pub fn routes(s: TokenStream) -> TokenStream {
 fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     let enum_name = input.ident;
     let Data::Enum(data) = input.data else {
-        panic!("Only enums are supported");
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "Only enums are supported",
+        ));
     };
 
     let arg = input
