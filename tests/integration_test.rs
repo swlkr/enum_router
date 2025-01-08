@@ -80,9 +80,9 @@ async fn resource_routing_works() -> Result<()> {
     enum Route {
         #[get("/")]
         Index,
-        #[resource]
+        #[router]
         #[allow(unused)]
-        Sessions
+        Sessions(Sessions)
     }
 
     async fn index() -> String {
@@ -164,6 +164,46 @@ async fn state_works() -> Result<()> {
     let app = Route::router().with_state(Arc::new(AppState { a: "".into() }));
 
     assert_eq!(StatusCode::OK, make_request(&app, "GET", "/").await);
+
+    Ok(())
+}
+
+
+#[tokio::test]
+async fn merge_routing_works() -> Result<()> {
+    #[router]
+    enum Route {
+        #[get("/")]
+        Index,
+        #[router]
+        #[allow(unused)]
+        Account(Account)
+    }
+
+    async fn index() -> String {
+        Route::Index.to_string()
+    }
+
+    #[router]
+    pub enum Account {
+        #[get("/account")]
+        Profile
+
+    }
+
+    async fn profile() -> String {
+        Account::Profile.to_string()
+    }
+
+    let url = format!("{}", Route::Index);
+    assert_eq!(url, "/");
+
+    let url = format!("{}", Account::Profile);
+    assert_eq!(url, "/account");
+
+    let app = Route::router();
+    assert_eq!(StatusCode::OK, make_request(&app, "GET", "/").await);
+    assert_eq!(StatusCode::OK, make_request(&app, "GET", "/account").await);
 
     Ok(())
 }

@@ -68,9 +68,9 @@ fn resource_macro(item_enum: ItemEnum) -> Result<TokenStream2> {
                  attr,
                  path,
                  variant,
-                 fields: _,
+                 ..
              }| match attr {
-                Attr::Resource => quote! { .merge(#variant::router()) },
+                Attr::Router(ty) => quote! { .merge(#ty::router()) },
                 method => {
                     let fn_string = pascal_to_snake(&variant.to_string());
                     let fn_name = Ident::new(&fn_string, variant.span());
@@ -92,7 +92,7 @@ fn resource_macro(item_enum: ItemEnum) -> Result<TokenStream2> {
         .iter()
         .map(|rv| {
             let left = left(&ident, &rv.variant, &rv.fields);
-            let right = right(&rv.fields, &rv.path);
+            let right = right(&rv);
             quote! { #left => #right }
         })
         .collect::<Vec<_>>();
@@ -142,11 +142,6 @@ fn query_string_macro(input: DeriveInput) -> Result<TokenStream2> {
             "Only structs are supported",
         ));
     };
-    // let field_names = data
-    //     .fields
-    //     .iter()
-    //     .filter_map(|field| field.ident.as_ref())
-    //     .collect::<Vec<_>>();
     let field_tokens = data
         .fields
         .iter()
@@ -154,7 +149,7 @@ fn query_string_macro(input: DeriveInput) -> Result<TokenStream2> {
         .map(|field| {
             let ident = field.ident.as_ref().unwrap();
             let name = ident.to_string();
-            quote! { (#name, self.#ident) }
+            quote! { (#name, self.#ident.as_ref()) }
         })
         .collect::<Vec<_>>();
 
@@ -176,7 +171,9 @@ fn query_string_macro(input: DeriveInput) -> Result<TokenStream2> {
 
 #[proc_macro_derive(
     Routes,
-    attributes(get, post, delete, patch, put, trace, head, state, resource, query)
+    attributes(
+        get, post, delete, patch, put, trace, head, state, resource, query, router
+    )
 )]
 pub fn routes(s: TokenStream) -> TokenStream {
     let input = parse_macro_input!(s as DeriveInput);
@@ -218,36 +215,22 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
 
     let urls = variants
         .iter()
-        .map(
-            |RouteVariant {
-                 variant,
-                 fields,
-                 path,
-                 ..
-             }| {
-                let left = left(&enum_name, variant, fields);
-                let right = right(&fields, path);
+        .map(|rv| {
+            let left = left(&enum_name, rv.variant, rv.fields);
+            let right = right(rv);
 
-                quote! { #left => #right }
-            },
-        )
+            quote! { #left => #right }
+        })
         .collect::<Vec<_>>();
 
     let methods = variants
         .iter()
-        .map(
-            |RouteVariant {
-                 variant,
-                 fields,
-                 path,
-                 ..
-             }| {
-                let left = left(&enum_name, variant, fields);
-                let right = right(fields, path);
+        .map(|rv| {
+            let left = left(&enum_name, rv.variant, rv.fields);
+            let right = right(rv);
 
-                quote! { #left => #right.to_owned() }
-            },
-        )
+            quote! { #left => #right.to_owned() }
+        })
         .collect::<Vec<_>>();
 
     let axum_route = variants
@@ -259,7 +242,9 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
                  path,
                  ..
              }| match attr {
-                Attr::Resource => quote! { .merge(#variant::router()) },
+                Attr::Router(ty) => quote! {
+                    .merge(#ty::router())
+                },
                 method => {
                     let fn_string = pascal_to_snake(&variant.to_string());
                     let fn_name = Ident::new(&fn_string, variant.span());
@@ -301,7 +286,10 @@ fn routes_macro(input: DeriveInput) -> Result<TokenStream2> {
     Ok(expanded)
 }
 
-fn right_from_unnamed(path: &LitStr, fields: &FieldsUnnamed) -> TokenStream2 {
+fn right_from_unnamed(
+    RouteVariant { attr, path, .. }: &RouteVariant,
+    fields: &FieldsUnnamed,
+) -> TokenStream2 {
     let is_query = fields
         .unnamed
         .iter()
@@ -320,22 +308,25 @@ fn right_from_unnamed(path: &LitStr, fields: &FieldsUnnamed) -> TokenStream2 {
                 }
             }
         }
-        false => {
-            let format = path
-                .value()
-                .split('/')
-                .map(|part| if part.contains("{") { "{}" } else { part })
-                .collect::<Vec<_>>()
-                .join("/");
-            let idents = fields
-                .unnamed
-                .iter()
-                .enumerate()
-                .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
-                .collect::<Vec<_>>();
+        false => match attr {
+            Attr::Router(_ty) => quote! { format!("{}", x0) },
+            _ => {
+                let format = path
+                    .value()
+                    .split('/')
+                    .map(|part| if part.contains("{") { "{}" } else { part })
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let idents = fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _field)| Ident::new(&format!("x{}", i), Span::call_site()))
+                    .collect::<Vec<_>>();
 
-            quote! { format!(#format, #(#idents,)*) }
-        }
+                quote! { format!(#format, #(#idents,)*) }
+            }
+        },
     }
 }
 
@@ -357,10 +348,11 @@ fn right_from_named(fields: &FieldsNamed, path: &LitStr) -> TokenStream2 {
     quote! { format!(#format, #(#idents,)*) }
 }
 
-fn right(fields: &Fields, path: &LitStr) -> TokenStream2 {
-    match fields {
-        Fields::Named(fields) => right_from_named(fields, path),
-        Fields::Unnamed(fields) => right_from_unnamed(path, fields),
+fn right(rv: &RouteVariant) -> TokenStream2 {
+    let path = &rv.path;
+    match rv.fields {
+        Fields::Named(fields) => right_from_named(&fields, &rv.path),
+        Fields::Unnamed(fields) => right_from_unnamed(&rv, &fields),
         Fields::Unit => quote! { #path.to_owned() },
     }
 }
@@ -426,7 +418,7 @@ enum Attr {
     Delete,
     Trace,
     Head,
-    Resource,
+    Router(syn::Type),
 }
 
 struct RouteVariant<'a> {
@@ -463,10 +455,19 @@ impl<'a> TryFrom<&'a Variant> for RouteVariant<'a> {
                     match (ident, lit_str) {
                         (None, None) => None,
                         (None, Some(_)) => None,
-                        (Some(_), None) => Some((
-                            Attr::Resource,
-                            LitStr::new(&format!("/{}", variant.to_string()), variant.span()),
-                        )),
+                        (Some(_), None) => match &value.fields {
+                            Fields::Unnamed(fields) => match fields.unnamed.first() {
+                                Some(field) => Some((
+                                    Attr::Router(field.ty.clone()),
+                                    LitStr::new(
+                                        &format!("/{}", variant.to_string()),
+                                        variant.span(),
+                                    ),
+                                )),
+                                None => None,
+                            },
+                            _ => None,
+                        },
                         (Some(ident), Some(lit_str)) => Some((Attr::from(ident), lit_str)),
                     }
                 })
@@ -494,7 +495,13 @@ impl From<&Ident> for Attr {
             "delete" => Attr::Delete,
             "head" => Attr::Head,
             "trace" => Attr::Trace,
-            _ => Attr::Resource,
+            _ => Attr::Router(syn::Type::Path(syn::TypePath {
+                qself: None,
+                path: syn::Path {
+                    leading_colon: None,
+                    segments: syn::punctuated::Punctuated::default(),
+                },
+            })),
         }
     }
 }
@@ -509,7 +516,7 @@ impl core::fmt::Display for Attr {
             Attr::Delete => "delete",
             Attr::Trace => "trace",
             Attr::Head => "head",
-            Attr::Resource => "",
+            Attr::Router(_ty) => "",
         })
     }
 }
