@@ -103,23 +103,23 @@ pub enum Sessions {
 
 impl Sessions {
     async fn index() -> String {
-        Self::Index.to_string()
+        Self::Index.to_string() // /sessions
     }
 
     async fn new() -> String {
-        Self::New.to_string()
+        Self::New.to_string() // /sessions/new
     }
 
     async fn create() -> String {
-        Self::Create.to_string()
+        Self::Create.to_string() // /sessions
     }
 
     async fn edit(Path(id): Path<i64>) -> String {
-        Self::Edit(id).to_string()
+        Self::Edit(id).to_string() // /sessions/1/edit
     }
 
     async fn update(Path(id): Path<i64>) -> String {
-        Self::Update(id).to_string()
+        Self::Update(id).to_string() // /sessions/1
     }
 }
 ```
