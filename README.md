@@ -15,9 +15,9 @@ use enum_router::router;
 pub enum Route {
   #[get("/")]
   Root,
-  #[get("/todos/:id/edit")]
+  #[get("/todos/{id}/edit")]
   EditTodo(i32)
-  #[put("/todos/:id")]
+  #[put("/todos/{id}")]
   UpdateTodo(i32)
 }
 ```
@@ -30,11 +30,11 @@ async fn root() -> String {
 }
 
 async fn edit_todo(Path(id): Path<i32>) -> String {
-  Route::EditTodo(id).to_string() // "/todos/:id/edit"
+  Route::EditTodo(id).to_string() // "/todos/{id}/edit"
 }
 
 async fn update_todo(Path(id): Path<i32>) -> String {
-  Route::UpdateTodo(id).to_string() // "/todos/:id"
+  Route::UpdateTodo(id).to_string() // "/todos/{id}"
 }
 ```
 
