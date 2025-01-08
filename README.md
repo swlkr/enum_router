@@ -61,20 +61,20 @@ struct AppState {
 }
 
 #[router(Arc<AppState>)]
-enum Routes {
+enum Route {
   #[get("/")]
   Index
 }
 
 async fn index(State(_st): State<Arc<AppState>>) -> String {
-  Routes::Index.to_string()
+  Route::Index.to_string()
 }
 
 #[tokio::main]
 async fn main() {
   let ip = "127.0.0.1:9001";
   let listener = tokio::net::TcpListener::bind(ip).await.unwrap();
-  let router = Routes::router().with_state(Arc::new(AppState { count: 0 }));
+  let router = Route::router().with_state(Arc::new(AppState { count: 0 }));
   axum::serve(listener, router).await.unwrap();
 }
 ```
@@ -88,8 +88,8 @@ This crate does more than check your borrows, it now borrows a very productive f
 enum Route {
     #[get("/")]
     Index,
-    #[resource]
-    Sessions
+    #[router]
+    Sessions(Sessions)
 }
 
 async fn index() -> String {
