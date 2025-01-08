@@ -10,13 +10,13 @@ members = [
 
 [dependencies]
 enum_router_macro = { path = "enum_router_macro", version = "0.1.0" }
-axum-core = { version = "0.3" }
+axum-core = { version = "0.5" }
 
 [dev-dependencies]
-serde = { version = "1.0.193", features = ["serde_derive", "derive"] }
+serde = { version = "1", features = ["serde_derive", "derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tower = { version = "0.4.13" }
-axum = { version = "0.6" }
+tower = { version = "0.5", features = ["util"] }
+axum = { version = "0.8" }
 
 [[test]]
 name = "integration_test"

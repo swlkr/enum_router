@@ -5,6 +5,7 @@ use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::Router;
 use enum_router::router;
+use enum_router_macro::resource;
 use serde::Deserialize;
 use tower::ServiceExt;
 
@@ -22,13 +23,13 @@ async fn login() -> impl IntoResponse {
     "login"
 }
 
-#[derive(Deserialize)]
-struct Abc {
+#[derive(PartialEq, Debug, QueryString, Deserialize)]
+pub struct Abc {
     abc: Option<u8>,
 }
 
 async fn abc(Query(abc): Query<Abc>) -> impl IntoResponse {
-    Route::Abc { abc: abc.abc }.to_string()
+    Route::Abc(abc).to_string()
 }
 
 async fn xyz(Path(xyz): Path<String>) -> impl IntoResponse {
@@ -45,8 +46,8 @@ pub enum Route {
     #[post("/login")]
     Login,
     #[get("/abc")]
-    Abc { abc: Option<u8> },
-    #[get("/xyz/:xyz")]
+    Abc(#[query] Abc),
+    #[get("/xyz/{xyz}")]
     Xyz(String),
 }
 
@@ -66,6 +67,75 @@ async fn it_works() -> Result<()> {
         StatusCode::OK,
         make_request(&app, "GET", "/abc?abc=123").await
     );
+
+    assert_eq!("/abc?abc=123", Route::Abc(Abc { abc: Some(123) }).to_string());
+    assert_eq!("/abc", Route::Abc(Abc { abc: None }).to_string());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn resource_routing_works() -> Result<()> {
+    #[router]
+    enum Route {
+        #[get("/")]
+        Index,
+        #[resource]
+        #[allow(unused)]
+        Sessions
+    }
+
+    async fn index() -> String {
+        Route::Index.to_string()
+    }
+
+    #[resource]
+    pub enum Sessions {
+        Index, New, Create, Edit(i64), Update(i64)
+    }
+
+    impl Sessions {
+        async fn index() -> String {
+            Self::Index.to_string()
+        }
+
+        async fn new() -> String {
+            Self::New.to_string()
+        }
+
+        async fn create() -> String {
+            Self::Create.to_string()
+        }
+
+        async fn edit(Path(id): Path<i64>) -> String {
+            Self::Edit(id).to_string()
+        }
+
+        async fn update(Path(id): Path<i64>) -> String {
+            Self::Update(id).to_string()
+        }
+    }
+
+
+    let url = format!("{}", Route::Index);
+    assert_eq!(url, "/");
+
+    let url = format!("{}", Sessions::Index);
+    assert_eq!(url, "/sessions");
+    let url = format!("{}", Sessions::New);
+
+    assert_eq!(url, "/sessions/new");
+
+    let url = format!("{}", Sessions::Edit(1));
+    assert_eq!(url, "/sessions/1/edit");
+
+    let app = Route::router();
+    assert_eq!(StatusCode::OK, make_request(&app, "GET", "/").await);
+    assert_eq!(StatusCode::OK, make_request(&app, "GET", "/sessions").await);
+    assert_eq!(StatusCode::OK, make_request(&app, "GET", "/sessions/new").await);
+    assert_eq!(StatusCode::OK, make_request(&app, "GET", "/sessions/1/edit").await);
+    assert_eq!(StatusCode::OK, make_request(&app, "PATCH", "/sessions/1").await);
+    assert_eq!(StatusCode::OK, make_request(&app, "POST", "/sessions").await);
 
     Ok(())
 }
