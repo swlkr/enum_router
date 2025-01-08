@@ -78,3 +78,48 @@ async fn main() {
   axum::serve(listener, router).await.unwrap();
 }
 ```
+
+# Resource routes
+
+This crate does more than check your borrows, it now borrows a very productive feature from rails, resource routing!
+
+```rust
+#[router]
+enum Route {
+    #[get("/")]
+    Index,
+    #[resource]
+    Sessions
+}
+
+async fn index() -> String {
+    Route::Index.to_string()
+}
+
+#[resource]
+pub enum Sessions {
+    Index, New, Create, Edit(i64), Update(i64)
+}
+
+impl Sessions {
+    async fn index() -> String {
+        Self::Index.to_string()
+    }
+
+    async fn new() -> String {
+        Self::New.to_string()
+    }
+
+    async fn create() -> String {
+        Self::Create.to_string()
+    }
+
+    async fn edit(Path(id): Path<i64>) -> String {
+        Self::Edit(id).to_string()
+    }
+
+    async fn update(Path(id): Path<i64>) -> String {
+        Self::Update(id).to_string()
+    }
+}
+```
